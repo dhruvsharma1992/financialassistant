@@ -1,0 +1,368 @@
+import React, { useState } from 'react';
+import * as mammoth from 'mammoth';
+
+const FinancialDocAnalyzer = () => {
+  const [fileContent, setFileContent] = useState('');
+  const [parsedData, setParsedData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  
+  // Process the uploaded file
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    if (!file.name.endsWith('.docx')) {
+      setError('Please upload a .docx file');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError('');
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      setFileContent(result.value);
+      
+      // Extract and organize data from the file content
+      const financialData = processFinancialData(result.value);
+      setParsedData(financialData);
+    } catch (err) {
+      console.error('Error processing file:', err);
+      setError('Error processing file. Please check the file format.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Process the raw text from the document to extract financial information
+  const processFinancialData = (text) => {
+    const data = {
+      expenditures: {},
+      savings: {},
+      assets: {}
+    };
+    
+    // Extract expenditures (assuming format "Month Year: Amount$")
+    const expenditureRegex = /(\w+)\s(\d{4}):\s(\d+)\$/g;
+    let match;
+    
+    while ((match = expenditureRegex.exec(text)) !== null) {
+      const month = match[1];
+      const year = match[2];
+      const amount = parseInt(match[3]);
+      
+      const key = `${month} ${year}`;
+      data.expenditures[key] = amount;
+    }
+    
+    // Extract savings (assuming format "Year: Amount$")
+    const savingsRegex = /(\d{4}):\s(\d+)\$/g;
+    while ((match = savingsRegex.exec(text)) !== null) {
+      const year = match[1];
+      const amount = parseInt(match[2]);
+      
+      if (!data.expenditures[year]) { // Make sure it's not an expenditure date
+        data.savings[year] = amount;
+      }
+    }
+    
+    // Extract assets (assuming format "Asset Type: Amount$")
+    const assetRegex = /([A-Za-z\s]+):\s(\d+)\$/g;
+    while ((match = assetRegex.exec(text)) !== null) {
+      const assetType = match[1].trim();
+      const amount = parseInt(match[2]);
+      
+      // Skip expenditure months and years
+      if (!isMonthOrYear(assetType)) {
+        data.assets[assetType] = amount;
+      }
+    }
+    
+    return data;
+  };
+  
+  const isMonthOrYear = (str) => {
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const isMonth = months.includes(str);
+    const isYear = /^\d{4}$/.test(str);
+    return isMonth || isYear;
+  };
+  
+  // Generate financial summary
+  const generateSummary = (data) => {
+    if (!data) return null;
+    
+    const totalAssets = Object.values(data.assets).reduce((total, amount) => total + amount, 0);
+    
+    // Calculate total expenditures
+    const expenditures = Object.values(data.expenditures);
+    const totalExpenditure = expenditures.reduce((total, amount) => total + amount, 0);
+    const avgMonthlyExpenditure = expenditures.length > 0 ? totalExpenditure / expenditures.length : 0;
+    
+    // Get savings trend
+    const savingsYears = Object.keys(data.savings).sort();
+    const savingsTrend = savingsYears.length >= 2 ? 
+      ((data.savings[savingsYears[savingsYears.length-1]] - data.savings[savingsYears[0]]) / data.savings[savingsYears[0]] * 100).toFixed(2) : 'N/A';
+    
+    return (
+      <div className="mt-8 p-6 bg-blue-50 rounded-lg">
+        <h2 className="text-xl font-bold mb-4">Financial Summary</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <h3 className="font-semibold">Assets</h3>
+            <p>Total Assets: ${totalAssets.toLocaleString()}</p>
+            <p>Largest Asset: {getLargestAsset(data.assets)}</p>
+          </div>
+          <div>
+            <h3 className="font-semibold">Expenditures</h3>
+            <p>Total Expenditure: ${totalExpenditure.toLocaleString()}</p>
+            <p>Avg. Monthly: ${avgMonthlyExpenditure.toFixed(2).toLocaleString()}</p>
+            <p>Highest Month: {getHighestExpenditure(data.expenditures)}</p>
+          </div>
+          <div>
+            <h3 className="font-semibold">Savings</h3>
+            <p>Latest Year Savings: ${getLatestSavings(data.savings).toLocaleString()}</p>
+            <p>Savings Trend: {savingsTrend}% over {savingsYears.length} years</p>
+          </div>
+          <div>
+            <h3 className="font-semibold">Recommendations</h3>
+            <ul className="list-disc ml-4">
+              {generateRecommendations(data)}
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  };
+  
+  const getLargestAsset = (assets) => {
+    if (Object.keys(assets).length === 0) return 'None';
+    const entries = Object.entries(assets);
+    const largest = entries.reduce((max, current) => current[1] > max[1] ? current : max, ['', 0]);
+    return `${largest[0]} ($${largest[1].toLocaleString()})`;
+  };
+  
+  const getHighestExpenditure = (expenditures) => {
+    if (Object.keys(expenditures).length === 0) return 'None';
+    const entries = Object.entries(expenditures);
+    const highest = entries.reduce((max, current) => current[1] > max[1] ? current : max, ['', 0]);
+    return `${highest[0]} ($${highest[1].toLocaleString()})`;
+  };
+  
+  const getLatestSavings = (savings) => {
+    const years = Object.keys(savings).sort((a, b) => parseInt(b) - parseInt(a));
+    return years.length > 0 ? savings[years[0]] : 0;
+  };
+  
+  const generateRecommendations = (data) => {
+    const recommendations = [];
+    
+    // Check expenditure patterns
+    const expenditureValues = Object.values(data.expenditures);
+    const avgExpenditure = expenditureValues.reduce((sum, val) => sum + val, 0) / expenditureValues.length;
+    const highMonths = Object.entries(data.expenditures).filter(([_, val]) => val > avgExpenditure * 1.5);
+    
+    if (highMonths.length > 0) {
+      recommendations.push(<li key="high-expense">Consider reducing expenses in high-spending months ({highMonths.map(m => m[0]).join(', ')})</li>);
+    }
+    
+    // Savings recommendations
+    const savingsYears = Object.keys(data.savings).sort();
+    if (savingsYears.length >= 2) {
+      const latestYear = savingsYears[savingsYears.length - 1];
+      const previousYear = savingsYears[savingsYears.length - 2];
+      
+      if (data.savings[latestYear] <= data.savings[previousYear]) {
+        recommendations.push(<li key="savings-decrease">Savings decreased or remained stagnant. Consider reviewing budget and increasing savings rate.</li>);
+      }
+    }
+    
+    // Asset allocation
+    const totalAssets = Object.values(data.assets).reduce((total, amount) => total + amount, 0);
+    Object.entries(data.assets).forEach(([asset, amount]) => {
+      const percentage = (amount / totalAssets) * 100;
+      
+      if (asset === 'Stocks' && percentage > 80) {
+        recommendations.push(<li key="diversify">Consider diversifying assets. Stock allocation is high at {percentage.toFixed(1)}% of total assets.</li>);
+      }
+    });
+    
+    if (recommendations.length === 0) {
+      recommendations.push(<li key="good">Your financial situation looks well balanced. Continue with your current financial strategy.</li>);
+    }
+    
+    return recommendations;
+  };
+  
+  // Components for data visualization
+  const renderExpenditureChart = (expenditures) => {
+    if (!expenditures || Object.keys(expenditures).length === 0) return null;
+    
+    // Sort entries by date (assuming format "Month Year")
+    const entries = Object.entries(expenditures).sort((a, b) => {
+      const monthsOrder = {
+        "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
+        "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
+      };
+      
+      const [aMonth, aYear] = a[0].split(' ');
+      const [bMonth, bYear] = b[0].split(' ');
+      
+      if (aYear !== bYear) return parseInt(aYear) - parseInt(bYear);
+      return monthsOrder[aMonth] - monthsOrder[bMonth];
+    });
+    
+    const maxExpenditure = Math.max(...Object.values(expenditures));
+    
+    return (
+      <div className="mt-6">
+        <h2 className="text-xl font-bold mb-2">Monthly Expenditures</h2>
+        <div className="flex items-end space-x-2 overflow-x-auto pb-2">
+          {entries.map(([date, amount]) => {
+            const percentage = (amount / maxExpenditure) * 100;
+            return (
+              <div key={date} className="flex flex-col items-center">
+                <div className="text-xs font-medium mb-1">${amount}</div>
+                <div 
+                  className="w-12 bg-blue-500 rounded-t"
+                  style={{ height: `${Math.max(percentage, 5)}%`, minHeight: '20px' }}
+                ></div>
+                <div className="text-xs mt-1 w-12 text-center">{date}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  
+  const renderSavingsChart = (savings) => {
+    if (!savings || Object.keys(savings).length === 0) return null;
+    
+    const years = Object.keys(savings).sort();
+    const maxSavings = Math.max(...Object.values(savings));
+    
+    return (
+      <div className="mt-6">
+        <h2 className="text-xl font-bold mb-2">Yearly Savings</h2>
+        <div className="flex items-end space-x-6 overflow-x-auto pb-2">
+          {years.map(year => {
+            const amount = savings[year];
+            const percentage = (amount / maxSavings) * 100;
+            return (
+              <div key={year} className="flex flex-col items-center">
+                <div className="text-xs font-medium mb-1">${amount.toLocaleString()}</div>
+                <div 
+                  className="w-16 bg-green-500 rounded-t"
+                  style={{ height: `${Math.max(percentage, 5)}%`, minHeight: '20px' }}
+                ></div>
+                <div className="text-xs mt-1">{year}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  
+  const renderAssetsChart = (assets) => {
+    if (!assets || Object.keys(assets).length === 0) return null;
+    
+    const totalAssets = Object.values(assets).reduce((total, amount) => total + amount, 0);
+    const assetEntries = Object.entries(assets);
+    
+    // Colorset for pie chart segments
+    const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-purple-500', 'bg-pink-500'];
+    
+    return (
+      <div className="mt-6">
+        <h2 className="text-xl font-bold mb-2">Asset Allocation</h2>
+        <div className="flex items-center justify-center">
+          <div className="w-40 h-40 rounded-full relative">
+            {assetEntries.map(([assetName, amount], index) => {
+              const percentage = (amount / totalAssets) * 100;
+              // This is a simplified representation using colored rectangles
+              return (
+                <div 
+                  key={assetName}
+                  className={`absolute ${colors[index % colors.length]} `}
+                  style={{
+                    width: '100%',
+                    height: `${percentage}%`,
+                    top: `${index > 0 ? assetEntries.slice(0, index).reduce((sum, [_, val]) => sum + (val / totalAssets) * 100, 0) : 0}%`,
+                  }}
+                ></div>
+              );
+            })}
+          </div>
+          <div className="ml-4">
+            {assetEntries.map(([assetName, amount], index) => {
+              const percentage = (amount / totalAssets) * 100;
+              return (
+                <div key={assetName} className="flex items-center mb-1">
+                  <div className={`w-3 h-3 ${colors[index % colors.length]} mr-2`}></div>
+                  <div className="text-sm">
+                    {assetName}: ${amount.toLocaleString()} ({percentage.toFixed(1)}%)
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-6">Financial Document Analyzer</h1>
+      
+      <div className="mb-6">
+        <label className="block text-sm font-medium mb-2">Upload Financial Document (.docx)</label>
+        <input
+          type="file"
+          onChange={handleFileUpload}
+          accept=".docx"
+          className="block w-full text-sm text-gray-500
+            file:mr-4 file:py-2 file:px-4
+            file:rounded-md file:border-0
+            file:text-sm file:font-semibold
+            file:bg-blue-50 file:text-blue-700
+            hover:file:bg-blue-100"
+        />
+        {error && <p className="mt-2 text-red-600 text-sm">{error}</p>}
+      </div>
+      
+      {isLoading && (
+        <div className="text-center py-4">
+          <p>Processing document...</p>
+        </div>
+      )}
+      
+      {parsedData && (
+        <div className="mt-6">
+          <h2 className="text-xl font-bold mb-4">Financial Analysis</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              {renderExpenditureChart(parsedData.expenditures)}
+            </div>
+            <div>
+              {renderSavingsChart(parsedData.savings)}
+            </div>
+          </div>
+          
+          <div className="mt-6">
+            {renderAssetsChart(parsedData.assets)}
+          </div>
+          
+          {generateSummary(parsedData)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default FinancialDocAnalyzer;
